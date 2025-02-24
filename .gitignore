@@ -1,33 +1,190 @@
-# Gradle files
-.gradle/
-build/
+import 'package:firebase_core/firebase_core.dart';
+import 'package:flutter/material.dart';
+import 'package:provider/provider.dart';
+import 'screens/home_screen.dart';
 
-# Local configuration file (sdk path, etc)
-local.properties
+void main() async {
+  WidgetsFlutterBinding.ensureInitialized();
+  await Firebase.initializeApp();
+  runApp(MyApp());
+}
 
-# Log/OS Files
-*.log
+class MyApp extends StatelessWidget {
+  @override
+  Widget build(BuildContext context) {
+    return MaterialApp(
+      debugShowCheckedModeBanner: false,
+      home: HomeScreen(),
+    );
+  }
+}
 
-# Android Studio generated files and folders
-captures/
-.externalNativeBuild/
-.cxx/
-*.apk
-output.json
+import 'package:firebase_auth/firebase_auth.dart';
+import 'package:google_sign_in/google_sign_in.dart';
 
-# IntelliJ
-*.iml
-.idea/
-misc.xml
-deploymentTargetDropDown.xml
-render.experimental.xml
+class AuthService {
+  final FirebaseAuth _auth = FirebaseAuth.instance;
+  final GoogleSignIn _googleSignIn = GoogleSignIn();
 
-# Keystore files
-*.jks
-*.keystore
+  Future<User?> signInWithGoogle() async {
+    final GoogleSignInAccount? googleUser = await _googleSignIn.signIn();
+    if (googleUser == null) return null;
 
-# Google Services (e.g. APIs or Firebase)
-google-services.json
+    final GoogleSignInAuthentication googleAuth = await googleUser.authentication;
+    final credential = GoogleAuthProvider.credential(
+      accessToken: googleAuth.accessToken,
+      idToken: googleAuth.idToken,
+    );
 
-# Android Profiling
-*.hprof
+    final UserCredential userCredential = await _auth.signInWithCredential(credential);
+    return userCredential.user;
+  }
+
+  Future<void> signOut() async {
+    await _googleSignIn.signOut();
+    await _auth.signOut();
+  }
+}
+import 'package:flutter/material.dart';
+import 'package:cloud_firestore/cloud_firestore.dart';
+import '../services/auth_service.dart';
+import 'event_details_screen.dart';
+
+class HomeScreen extends StatefulWidget {
+  @override
+  _HomeScreenState createState() => _HomeScreenState();
+}
+
+class _HomeScreenState extends State<HomeScreen> {
+  final AuthService _authService = AuthService();
+
+  @override
+  Widget build(BuildContext context) {
+    return Scaffold(
+      appBar: AppBar(
+        title: Text('Football Events'),
+        actions: [
+          IconButton(
+            icon: Icon(Icons.login),
+            onPressed: () async {
+              await _authService.signInWithGoogle();
+              setState(() {});
+            },
+          ),
+        ],
+      ),
+      body: StreamBuilder(
+        stream: FirebaseFirestore.instance.collection('events').snapshots(),
+        builder: (context, snapshot) {
+          if (!snapshot.hasData) return CircularProgressIndicator();
+          var events = snapshot.data!.docs;
+
+          return ListView.builder(
+            itemCount: events.length,
+            itemBuilder: (context, index) {
+              var event = events[index];
+              return ListTile(
+                title: Text(event['name']),
+                subtitle: Text(event['date']),
+                onTap: () => Navigator.push(
+                  context,
+                  MaterialPageRoute(
+                    builder: (context) => EventDetailsScreen(event.id),
+                  ),
+                ),
+              );
+            },
+          );
+        },
+      ),
+    );
+  }
+}
+import 'package:flutter/material.dart';
+import 'package:cloud_firestore/cloud_firestore.dart';
+
+class CreateEventScreen extends StatefulWidget {
+  @override
+  _CreateEventScreenState createState() => _CreateEventScreenState();
+}
+
+class _CreateEventScreenState extends State<CreateEventScreen> {
+  final TextEditingController _nameController = TextEditingController();
+  final TextEditingController _dateController = TextEditingController();
+
+  void _createEvent() {
+    FirebaseFirestore.instance.collection('events').add({
+      'name': _nameController.text,
+      'date': _dateController.text,
+      'teams': [],
+      'score': {'teamA': 0, 'teamB': 0},
+    });
+    Navigator.pop(context);
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return Scaffold(
+      appBar: AppBar(title: Text('Create Event')),
+      body: Padding(
+        padding: EdgeInsets.all(16.0),
+        child: Column(
+          children: [
+            TextField(controller: _nameController, decoration: InputDecoration(labelText: 'Event Name')),
+            TextField(controller: _dateController, decoration: InputDecoration(labelText: 'Event Date')),
+            SizedBox(height: 20),
+            ElevatedButton(onPressed: _createEvent, child: Text('Create'))
+          ],
+        ),
+      ),
+    );
+  }
+}
+import 'package:flutter/material.dart';
+import 'package:cloud_firestore/cloud_firestore.dart';
+
+class EventDetailsScreen extends StatelessWidget {
+  final String eventId;
+  EventDetailsScreen(this.eventId);
+
+  @override
+  Widget build(BuildContext context) {
+    return Scaffold(
+      appBar: AppBar(title: Text('Event Details')),
+      body: StreamBuilder(
+        stream: FirebaseFirestore.instance.collection('events').doc(eventId).snapshots(),
+        builder: (context, snapshot) {
+          if (!snapshot.hasData) return CircularProgressIndicator();
+          var event = snapshot.data!;
+          var score = event['score'];
+
+          return Column(
+            children: [
+              Text(event['name'], style: TextStyle(fontSize: 22, fontWeight: FontWeight.bold)),
+              Text('Date: ${event['date']}'),
+              SizedBox(height: 20),
+              Text('Score', style: TextStyle(fontSize: 20, fontWeight: FontWeight.bold)),
+              Text('${score['teamA']} - ${score['teamB']}', style: TextStyle(fontSize: 30)),
+              ElevatedButton(
+                onPressed: () {
+                  FirebaseFirestore.instance.collection('events').doc(eventId).update({
+                    'score.teamA': score['teamA'] + 1,
+                  });
+                },
+                child: Text('Increase Team A Score'),
+              ),
+              ElevatedButton(
+                onPressed: () {
+                  FirebaseFirestore.instance.collection('events').doc(eventId).update({
+                    'score.teamB': score['teamB'] + 1,
+                  });
+                },
+                child: Text('Increase Team B Score'),
+              ),
+            ],
+          );
+        },
+      ),
+    );
+  }
+}
